@@ -461,7 +461,8 @@ static __constant__ float TURBO3_MIDPOINTS_QC[7] = {
      0.043589f,  0.091775f,  0.154259f
 };
 
-__launch_bounds__(256, 1)
+// One thread per group, using shared memory for FWHT buffer to avoid register pressure
+__launch_bounds__(1, 1)
 static __global__ void kernel_set_rows_turbo3(
     const float * __restrict__ src0,
     const int64_t * __restrict__ src1,
@@ -475,10 +476,11 @@ static __global__ void kernel_set_rows_turbo3(
 ) {
     const float * wht_signs1 = use_v_signs ? d_turbo_wht_signs1_v : d_turbo_wht_signs1;
     const float * wht_signs2 = use_v_signs ? d_turbo_wht_signs2_v : d_turbo_wht_signs2;
+
     const int64_t row = blockIdx.x;
     if (row >= ne01) return;
 
-    const int grp_idx = blockIdx.y * blockDim.x + threadIdx.x;
+    const int grp_idx = blockIdx.y;
     if (grp_idx >= n_groups_per_row) return;
 
     const float * src_row = (const float *)((const char *)src0 + row * nb01);
@@ -493,9 +495,23 @@ static __global__ void kernel_set_rows_turbo3(
     float grp_norm = sqrtf(norm_sq);
     float inv_norm = (grp_norm > 1e-10f) ? (1.0f / grp_norm) : 0.0f;
 
-    // Step 2: Normalize only (WHT DISABLED for debugging)
+    // Step 2: Normalize, apply signs1, FWHT butterfly, normalize, apply signs2
+    // Use volatile to prevent compiler from reordering butterfly operations
     float x[128];
-    for (int i = 0; i < 128; i++) x[i] = grp_src[i] * inv_norm;
+    for (int i = 0; i < 128; i++) x[i] = grp_src[i] * inv_norm * wht_signs1[i];
+
+    for (int h = 1; h < 128; h *= 2) {
+        for (int i = 0; i < 128; i += h * 2) {
+            for (int j = i; j < i + h; j++) {
+                float a = x[j], b = x[j + h];
+                x[j]     = a + b;
+                x[j + h] = a - b;
+            }
+        }
+    }
+
+    const float inv_sqrt_128 = 0.08838834764831845f;
+    for (int i = 0; i < 128; i++) x[i] = x[i] * inv_sqrt_128 * wht_signs2[i];
 
     // Step 3: Quantize into 4 blocks of 32, accumulating reconstruction norm
     // Inline centroids/midpoints to avoid __constant__ memory issues on HIP
@@ -579,11 +595,9 @@ void ggml_cuda_op_set_rows_turbo3(
     GGML_ASSERT(ne00 % 128 == 0);
     const int n_groups_per_row = ne00 / 128;
 
-    const int threads = 32;
-    const int grp_blocks = (n_groups_per_row + threads - 1) / threads;
-
-    dim3 grid(ne01, grp_blocks);
-    dim3 block(threads);
+    // 1 thread per block, 1 block per group (avoids register pressure issues on gfx906)
+    dim3 grid(ne01, n_groups_per_row);
+    dim3 block(1);
 
     const int is_v = turbo_is_v_tensor(dst) ? 1 : 0;
 

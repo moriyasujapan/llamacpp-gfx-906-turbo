@@ -62,6 +62,9 @@ list(APPEND GGML_HEADERS_ROCM "../../include/ggml-cuda.h")
 
 file(GLOB   GGML_SOURCES_ROCM "../ggml-cuda/*.cu")
 
+# turbo-quant.cu: compile at -O1 to work around HIP compiler FWHT optimization bug on gfx906
+set_source_files_properties(../ggml-cuda/turbo-quant.cu PROPERTIES COMPILE_FLAGS "-O1")
+
 # GFX906-specific source files (AMD MI50/MI60 optimizations)
 file(GLOB SRCS "../ggml-cuda/gfx906/*.cu")
 message(STATUS "GFX906 .cu files found: ${SRCS}")
