@@ -1,0 +1,10 @@
+[package]
+name = "llamacpp-turbo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+llama-cpp-2 = { path = "llama-cpp-rs/llama-cpp-2", features = ["rocm"] }
+
+[features]
+default = []
