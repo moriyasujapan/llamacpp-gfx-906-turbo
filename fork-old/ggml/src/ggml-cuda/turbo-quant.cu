@@ -408,35 +408,35 @@ static __constant__ float d_turbo_wht_signs2_v[128] = {
      1, 1,-1, 1,-1,-1, 1,-1, 1,-1, 1,-1,-1,-1,-1, 1
 };
 
-__launch_bounds__(256, 1)
+// FWHT via shared memory — one thread per block, avoids HIP compiler bug on gfx906
+__launch_bounds__(1, 1)
 static __global__ void kernel_turbo_wht(
     const float * __restrict__ src,
     float       * __restrict__ dst,
     const int64_t n_elements,
     const int     direction
 ) {
-    const int64_t group_idx = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    __shared__ float x[128];
+
+    const int64_t group_idx = blockIdx.x;
     const int64_t n_groups = n_elements / 128;
     if (group_idx >= n_groups) return;
 
     const float * in  = src + group_idx * 128;
     float       * out = dst + group_idx * 128;
 
-    float x[128];
-
-    // direction 0: forward rotation for Q (uses K signs: signs1 → signs2)
-    // direction 1: inverse rotation for V output (uses V signs: signs2_v → signs1_v)
+    // direction 0: forward rotation for Q (uses K signs: signs1 -> signs2)
+    // direction 1: inverse rotation for V output (uses V signs: signs2_v -> signs1_v)
     const float * s_first  = (direction == 0) ? d_turbo_wht_signs1   : d_turbo_wht_signs2_v;
     const float * s_second = (direction == 0) ? d_turbo_wht_signs2   : d_turbo_wht_signs1_v;
 
-    for (int i = 0; i < 128; i++) {
-        x[i] = in[i] * s_first[i];
-    }
+    for (int i = 0; i < 128; i++) x[i] = in[i] * s_first[i];
 
     for (int h = 1; h < 128; h *= 2) {
         for (int i = 0; i < 128; i += h * 2) {
             for (int j = i; j < i + h; j++) {
-                float a = x[j], b = x[j + h];
+                float a = x[j];
+                float b = x[j + h];
                 x[j]     = a + b;
                 x[j + h] = a - b;
             }
@@ -444,9 +444,7 @@ static __global__ void kernel_turbo_wht(
     }
 
     const float inv_sqrt_128 = 0.08838834764831845f;
-    for (int i = 0; i < 128; i++) {
-        out[i] = x[i] * inv_sqrt_128 * s_second[i];
-    }
+    for (int i = 0; i < 128; i++) out[i] = x[i] * inv_sqrt_128 * s_second[i];
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -461,7 +459,8 @@ static __constant__ float TURBO3_MIDPOINTS_QC[7] = {
      0.043589f,  0.091775f,  0.154259f
 };
 
-// One thread per group, using shared memory for FWHT buffer to avoid register pressure
+// FWHT via shared memory — avoids HIP compiler optimization bug on gfx906
+// One thread per block, FWHT buffer in shared memory (not registers)
 __launch_bounds__(1, 1)
 static __global__ void kernel_set_rows_turbo3(
     const float * __restrict__ src0,
@@ -474,6 +473,8 @@ static __global__ void kernel_set_rows_turbo3(
     const int n_groups_per_row,
     const int use_v_signs
 ) {
+    __shared__ float x[128];
+
     const float * wht_signs1 = use_v_signs ? d_turbo_wht_signs1_v : d_turbo_wht_signs1;
     const float * wht_signs2 = use_v_signs ? d_turbo_wht_signs2_v : d_turbo_wht_signs2;
 
@@ -495,23 +496,16 @@ static __global__ void kernel_set_rows_turbo3(
     float grp_norm = sqrtf(norm_sq);
     float inv_norm = (grp_norm > 1e-10f) ? (1.0f / grp_norm) : 0.0f;
 
-    // Step 2: Normalize, apply signs1, FWHT butterfly, normalize, apply signs2
-    // Use volatile to prevent compiler from reordering butterfly operations
-    float x[128];
-    for (int i = 0; i < 128; i++) x[i] = grp_src[i] * inv_norm * wht_signs1[i];
-
-    for (int h = 1; h < 128; h *= 2) {
-        for (int i = 0; i < 128; i += h * 2) {
-            for (int j = i; j < i + h; j++) {
-                float a = x[j], b = x[j + h];
-                x[j]     = a + b;
-                x[j + h] = a - b;
-            }
-        }
+    // DEBUG: print first few __constant__ sign values from GPU
+    if (row == 0 && grp_idx == 0) {
+        printf("[FWHT_GPU] signs1[0..3]: %f %f %f %f  signs2[0..3]: %f %f %f %f  inv_norm=%f grp_norm=%f\n",
+               wht_signs1[0], wht_signs1[1], wht_signs1[2], wht_signs1[3],
+               wht_signs2[0], wht_signs2[1], wht_signs2[2], wht_signs2[3],
+               inv_norm, grp_norm);
     }
 
-    const float inv_sqrt_128 = 0.08838834764831845f;
-    for (int i = 0; i < 128; i++) x[i] = x[i] * inv_sqrt_128 * wht_signs2[i];
+    // FWHT DISABLED — plain normalization only
+    for (int i = 0; i < 128; i++) x[i] = grp_src[i] * inv_norm;
 
     // Step 3: Quantize into 4 blocks of 32, accumulating reconstruction norm
     // Inline centroids/midpoints to avoid __constant__ memory issues on HIP
@@ -910,16 +904,8 @@ void ggml_cuda_op_turbo_wht(ggml_backend_cuda_context & ctx, ggml_tensor * dst) 
     GGML_ASSERT(n_elements % 128 == 0);
 
     const int64_t n_groups = n_elements / 128;
-    const int threads = 256;
-    const int blocks = (n_groups + threads - 1) / threads;
 
-    static int turbo_wht_count = 0;
-    if (turbo_wht_count < 5) {
-        fprintf(stderr, "[TURBO_WHT] dir=%d n_elements=%ld n_groups=%ld\n",
-                direction, (long)n_elements, (long)n_groups);
-        turbo_wht_count++;
-    }
-
-    kernel_turbo_wht<<<blocks, threads, 0, ctx.stream()>>>(
+    // 1 thread per block, 1 block per group (shared memory FWHT)
+    kernel_turbo_wht<<<(int)n_groups, 1, 0, ctx.stream()>>>(
         src_data, dst_data, n_elements, direction);
 }

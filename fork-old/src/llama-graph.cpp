@@ -2078,7 +2078,7 @@ ggml_tensor * llm_graph_context::build_attn(
             diag_count++;
         }
     }
-    if (k->type == GGML_TYPE_TURBO2_0 || k->type == GGML_TYPE_TURBO3_0 || k->type == GGML_TYPE_TURBO4_0) {
+    if (false && (k->type == GGML_TYPE_TURBO2_0 || k->type == GGML_TYPE_TURBO3_0 || k->type == GGML_TYPE_TURBO4_0)) {
         if (q->ne[0] % 128 == 0) {
             if (!ggml_is_contiguous(q)) { q = ggml_cont(ctx0, q); }
             q = ggml_turbo_wht(ctx0, q, 0);  // 0 = forward
@@ -2089,7 +2089,7 @@ ggml_tensor * llm_graph_context::build_attn(
     cb(cur, "kqv_out", il);
 
     // TurboQuant V un-rotation: O(d log d) inverse WHT on attention output
-    if (v->type == GGML_TYPE_TURBO2_0 || v->type == GGML_TYPE_TURBO3_0 || v->type == GGML_TYPE_TURBO4_0) {
+    if (false && (v->type == GGML_TYPE_TURBO2_0 || v->type == GGML_TYPE_TURBO3_0 || v->type == GGML_TYPE_TURBO4_0)) {
         if (cur->ne[0] % 128 == 0) {
             if (!ggml_is_contiguous(cur)) { cur = ggml_cont(ctx0, cur); }
             cur = ggml_turbo_wht(ctx0, cur, 1);  // 1 = inverse
@@ -2244,7 +2244,7 @@ ggml_tensor * llm_graph_context::build_attn(
     ggml_tensor * v = mctx_cur->get_v(ctx0, il);
 
     // TurboQuant: pre-rotate Q to match WHT-rotated K in KV cache
-    if (k->type == GGML_TYPE_TURBO2_0 || k->type == GGML_TYPE_TURBO3_0 || k->type == GGML_TYPE_TURBO4_0) {
+    if (false && (k->type == GGML_TYPE_TURBO2_0 || k->type == GGML_TYPE_TURBO3_0 || k->type == GGML_TYPE_TURBO4_0)) {
         if (q->ne[0] % 128 == 0) {
             if (!ggml_is_contiguous(q)) { q = ggml_cont(ctx0, q); }
             q = ggml_turbo_wht(ctx0, q, 0);  // 0 = forward
