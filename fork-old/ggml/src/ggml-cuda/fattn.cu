@@ -772,10 +772,9 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    // Shadow cache: bulk dequant turbo3→fp16, then run standard FA kernel
-    // Set GGML_TURBO_DECODE_NATIVE=1 to bypass shadow cache and use native turbo3 vec kernel
-    static const bool turbo_native = (getenv("GGML_TURBO_DECODE_NATIVE") != nullptr);
-    if (turbo_native || Q->ne[3] != 1) {
+    // Native turbo3 vec kernel (dequant inside attention loop)
+    // Shadow cache available via GGML_TURBO_SHADOW_CACHE=1 but has quality issues
+    {
         switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {
             case BEST_FATTN_KERNEL_NONE:
                 GGML_ABORT("fatal error");

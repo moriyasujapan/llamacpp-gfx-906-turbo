@@ -971,12 +971,7 @@ void ggml_cuda_op_turbo_wht(ggml_backend_cuda_context & ctx, ggml_tensor * dst) 
 
     const int64_t n_groups = n_elements / 128;
 
-    // Use dense rotation matrix instead of FWHT
-    turbo_init_rotation_device();
-    // direction 0: forward (R*x for Q), direction 1: inverse (R^T*x for V output)
-    const float * RT = (direction == 0) ? d_rotation_k : d_rotation_k_inv;
-    int transpose = (direction == 0) ? 0 : 1;
-
-    kernel_turbo_dense_rotate<<<(int)n_groups, 1, 0, ctx.stream()>>>(
-        src_data, dst_data, RT, n_elements, transpose);
+    // FWHT kernel (verified correct in standalone tests)
+    kernel_turbo_wht<<<(int)n_groups, 1, 0, ctx.stream()>>>(
+        src_data, dst_data, n_elements, direction);
 }
