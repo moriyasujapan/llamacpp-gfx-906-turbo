@@ -408,6 +408,67 @@ static __constant__ float d_turbo_wht_signs2_v[128] = {
      1, 1,-1, 1,-1,-1, 1,-1, 1,-1, 1,-1,-1,-1,-1, 1
 };
 
+// Dense rotation matrix for K (loaded from turbo-rotation-data.h at init)
+static float * d_rotation_k = nullptr;  // 128*128 floats on device
+static float * d_rotation_k_inv = nullptr;
+// V uses different rotation (different seed)
+static float * d_rotation_v = nullptr;
+static float * d_rotation_v_inv = nullptr;
+
+// Include the precomputed rotation matrix
+#include "../../src/turbo-rotation-data.h"
+
+static void turbo_init_rotation_device() {
+    if (d_rotation_k != nullptr) return;
+    // TURBO_ROTATION_RT is R^T (128x128), stored row-major in turbo-rotation-data.h
+    // For forward rotation y = R*x, we need R. Since R^T is stored, R = transpose(R^T).
+    // But for matrix multiply y[i] = sum_j R[i][j] * x[j], and R^T is stored row-major,
+    // R^T[i][j] = R[j][i], so R[i][j] = R^T[j][i]. We can just use R^T with transposed indexing.
+    // Simpler: store R^T as-is, and compute y = R^T^T * x = R * x by reading columns of R^T.
+    //
+    // Actually: just upload R^T and use it. The kernel will compute y[i] = sum_j RT[j][i] * x[j]
+    // which equals y = R * x where R = (R^T)^T.
+    hipMalloc(&d_rotation_k, 128*128*sizeof(float));
+    hipMemcpy(d_rotation_k, TURBO_ROTATION_RT, 128*128*sizeof(float), hipMemcpyHostToDevice);
+
+    // For inverse: y = R^T * x, just use R^T directly: y[i] = sum_j RT[i][j] * x[j]
+    hipMalloc(&d_rotation_k_inv, 128*128*sizeof(float));
+    hipMemcpy(d_rotation_k_inv, TURBO_ROTATION_RT, 128*128*sizeof(float), hipMemcpyHostToDevice);
+
+    // TODO: V rotation uses different seed — for now use same as K
+    d_rotation_v = d_rotation_k;
+    d_rotation_v_inv = d_rotation_k_inv;
+}
+
+// Dense rotation kernel: y[i] = sum_j R[i][j] * x[j]
+// R is stored as R^T row-major, so R[i][j] = RT[j][i] = RT[j*128+i]
+__launch_bounds__(1, 1)
+static __global__ void kernel_turbo_dense_rotate(
+    const float * __restrict__ src,
+    float * __restrict__ dst,
+    const float * __restrict__ RT,  // R^T stored row-major (128x128)
+    const int64_t n_elements,
+    const int transpose  // 0: y=R*x (forward), 1: y=R^T*x (inverse)
+) {
+    const int64_t group_idx = blockIdx.x;
+    const int64_t n_groups = n_elements / 128;
+    if (group_idx >= n_groups) return;
+
+    const float * in = src + group_idx * 128;
+    float * out = dst + group_idx * 128;
+
+    for (int i = 0; i < 128; i++) {
+        float sum = 0;
+        for (int j = 0; j < 128; j++) {
+            // transpose=0: y[i] = sum R[i][j]*x[j] = sum RT[j*128+i]*x[j]
+            // transpose=1: y[i] = sum RT[i][j]*x[j] = sum RT[i*128+j]*x[j]
+            float r = transpose ? RT[i*128+j] : RT[j*128+i];
+            sum += r * in[j];
+        }
+        out[i] = sum;
+    }
+}
+
 // FWHT via shared memory — one thread per block, avoids HIP compiler bug on gfx906
 __launch_bounds__(1, 1)
 static __global__ void kernel_turbo_wht(
@@ -496,16 +557,21 @@ static __global__ void kernel_set_rows_turbo3(
     float grp_norm = sqrtf(norm_sq);
     float inv_norm = (grp_norm > 1e-10f) ? (1.0f / grp_norm) : 0.0f;
 
-    // DEBUG: print first few __constant__ sign values from GPU
-    if (row == 0 && grp_idx == 0) {
-        printf("[FWHT_GPU] signs1[0..3]: %f %f %f %f  signs2[0..3]: %f %f %f %f  inv_norm=%f grp_norm=%f\n",
-               wht_signs1[0], wht_signs1[1], wht_signs1[2], wht_signs1[3],
-               wht_signs2[0], wht_signs2[1], wht_signs2[2], wht_signs2[3],
-               inv_norm, grp_norm);
-    }
-
-    // FWHT DISABLED — plain normalization only
-    for (int i = 0; i < 128; i++) x[i] = grp_src[i] * inv_norm;
+    // Dense rotation: x = R * (src / norm)
+    // R^T is passed via use_v_signs overloaded as pointer index
+    // Actually we can't easily pass the matrix pointer to this kernel,
+    // so we use the FWHT approach but this time it should work since
+    // we verified FWHT is correct in standalone tests.
+    // The issue must be elsewhere — let's re-enable FWHT.
+    for (int i = 0; i < 128; i++) x[i] = grp_src[i] * inv_norm * wht_signs1[i];
+    for (int h = 1; h < 128; h *= 2)
+        for (int i = 0; i < 128; i += h * 2)
+            for (int j = i; j < i + h; j++) {
+                float a = x[j], b = x[j+h];
+                x[j] = a+b; x[j+h] = a-b;
+            }
+    float inv_sqrt_128 = 1.0f / sqrtf(128.0f);
+    for (int i = 0; i < 128; i++) x[i] = x[i] * inv_sqrt_128 * wht_signs2[i];
 
     // Step 3: Quantize into 4 blocks of 32, accumulating reconstruction norm
     // Inline centroids/midpoints to avoid __constant__ memory issues on HIP
@@ -905,7 +971,12 @@ void ggml_cuda_op_turbo_wht(ggml_backend_cuda_context & ctx, ggml_tensor * dst) 
 
     const int64_t n_groups = n_elements / 128;
 
-    // 1 thread per block, 1 block per group (shared memory FWHT)
-    kernel_turbo_wht<<<(int)n_groups, 1, 0, ctx.stream()>>>(
-        src_data, dst_data, n_elements, direction);
+    // Use dense rotation matrix instead of FWHT
+    turbo_init_rotation_device();
+    // direction 0: forward (R*x for Q), direction 1: inverse (R^T*x for V output)
+    const float * RT = (direction == 0) ? d_rotation_k : d_rotation_k_inv;
+    int transpose = (direction == 0) ? 0 : 1;
+
+    kernel_turbo_dense_rotate<<<(int)n_groups, 1, 0, ctx.stream()>>>(
+        src_data, dst_data, RT, n_elements, transpose);
 }

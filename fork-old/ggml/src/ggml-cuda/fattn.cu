@@ -766,9 +766,10 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    // Turbo path: use persistent fp16 shadow cache
-    static const bool turbo_native = (getenv("GGML_TURBO_DECODE_NATIVE") != nullptr);
-    if (turbo_native || Q->ne[3] != 1) {
+    // Use native turbo3 vec kernel (shadow cache has dequant bug — TODO: fix)
+    // Set GGML_TURBO_SHADOW_CACHE=1 to use the shadow cache path instead
+    static const bool turbo_shadow = (getenv("GGML_TURBO_SHADOW_CACHE") != nullptr);
+    if (!turbo_shadow || Q->ne[3] != 1) {
         switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {
             case BEST_FATTN_KERNEL_NONE:
                 GGML_ABORT("fatal error");
