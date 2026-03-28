@@ -162,24 +162,30 @@ static void turbo_shadow_sync(
         const int64_t dst_row_stride  = ne0;
         const int64_t dst_head_stride = ne0 * sh.capacity;
 
+        // K tensor is a 4D view: (head_dim, n_head_kv, n_kv, n_stream)
+        // nb[1] = stride between heads (bytes)
+        // nb[2] = stride between KV positions (bytes)
+        // The dequant kernel uses:
+        //   src_row = src + head * src_nb2 + abs_row * src_nb1
+        // So src_nb1 = nb[2] (KV row stride), src_nb2 = nb[1] (head stride)
         dim3 grid((int)n_rows, (int)ne2);
         if (T->type == GGML_TYPE_TURBO4_0) {
             k_turbo4_dequant_rows_f16<<<grid, (int)ne0, 0, stream>>>(
                 (const char *)T->data, sh.buf, ne0,
                 row_start, n_rows,
-                T->nb[1], T->nb[2],
+                T->nb[2], T->nb[1],
                 dst_row_stride, dst_head_stride);
         } else if (T->type == GGML_TYPE_TURBO2_0) {
             k_turbo2_dequant_rows_f16<<<grid, (int)ne0, 0, stream>>>(
                 (const char *)T->data, sh.buf, ne0,
                 row_start, n_rows,
-                T->nb[1], T->nb[2],
+                T->nb[2], T->nb[1],
                 dst_row_stride, dst_head_stride);
         } else {
             k_turbo3_dequant_rows_f16<<<grid, (int)ne0, 0, stream>>>(
                 (const char *)T->data, sh.buf, ne0,
                 row_start, n_rows,
-                T->nb[1], T->nb[2],
+                T->nb[2], T->nb[1],
                 dst_row_stride, dst_head_stride);
         }
     }
@@ -766,10 +772,10 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    // Use native turbo3 vec kernel (shadow cache has dequant bug — TODO: fix)
-    // Set GGML_TURBO_SHADOW_CACHE=1 to use the shadow cache path instead
-    static const bool turbo_shadow = (getenv("GGML_TURBO_SHADOW_CACHE") != nullptr);
-    if (!turbo_shadow || Q->ne[3] != 1) {
+    // Shadow cache: bulk dequant turbo3→fp16, then run standard FA kernel
+    // Set GGML_TURBO_DECODE_NATIVE=1 to bypass shadow cache and use native turbo3 vec kernel
+    static const bool turbo_native = (getenv("GGML_TURBO_DECODE_NATIVE") != nullptr);
+    if (turbo_native || Q->ne[3] != 1) {
         switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {
             case BEST_FATTN_KERNEL_NONE:
                 GGML_ABORT("fatal error");
