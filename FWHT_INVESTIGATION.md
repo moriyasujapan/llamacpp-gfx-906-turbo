@@ -155,17 +155,52 @@ The current implementation uses D2 * H * D1 (two sign matrices).
 Some SRHT variants use only one sign matrix: `R = H * D / sqrt(d)`.
 This is simpler and may avoid the sign ordering issue.
 
-## Recommended Next Steps (Priority Order)
+## Test Results (2026-03-28)
 
-1. **Approach 2 first** — standalone FWHT correctness test on HIP.
-   If the butterfly output matches CPU, the bug is in sign application.
-   If it doesn't match, the bug is in the HIP butterfly compilation.
+### FWHT is CORRECT on gfx906
+Standalone test: CPU vs GPU FWHT — **zero error**. __constant__ signs, shared
+memory, dummy arrays — all pass. The butterfly itself is NOT the bug.
 
-2. **Approach 1 as fallback** — dense rotation is slow but will make turbo3
-   fully functional while the FWHT issue is debugged.
+### Rotation preserves inner products (no quantization)
+`<R*Q, R*K> = <Q, K>` with error 6.7e-8. Orthogonality confirmed.
 
-3. **Approach 3 for validation** — once rotation works, validate against
-   PyTorch end-to-end to ensure quality matches the paper's claims.
+### Quantization error is high but expected
+- Single vector: 91.8% relative error on inner product (with or without rotation)
+- 1000 random vectors: 55.9% mean relative error (no rotation)
+- This is EXPECTED for 3-bit scalar quantization on 128-dim vectors
+- The paper's "quality neutrality" refers to LLM output quality, not individual
+  dot product accuracy — softmax compresses the errors
+
+### Madreag centroids are close to optimal
+Lloyd-Max optimal for N(0, 1/128): [-0.1902, -0.1188, -0.0668, -0.0217, ...]
+Madreag centroids:                  [-0.1907, -0.1178, -0.0657, -0.0215, ...]
+Difference: ~0.001 — not the cause of quality issues.
+
+### Key Insight
+The FWHT rotation is mathematically correct. The high quantization error is
+inherent to 3-bit quantization. The real question is: why does rotation make
+LLM output WORSE when it should make it slightly BETTER?
+
+Hypothesis: the rotation IS working correctly, but there's a bug in the
+**interaction between SET_ROWS, shadow cache dequant, and FA** that only
+manifests with rotation enabled. Possibly:
+- The shadow cache dequant reads blocks in wrong order after rotation
+- The norm correction is stored/read differently with rotation
+- The graph-level Q rotation runs on wrong device / at wrong time
+
+## Recommended Next Steps
+
+1. **Use dense 128x128 rotation matrix** from turbo-rotation-data.h instead
+   of FWHT. This is O(d²) but guaranteed to match the PyTorch reference.
+   If this ALSO produces garbage → the bug is in the integration, not the rotation.
+   If this works → the FWHT has a subtle numerical issue we can debug later.
+
+2. **Add exhaustive logging** to one forward pass: print K values after SET_ROWS
+   quantize, print K values after shadow dequant, print Q values after WHT,
+   compare on CPU.
+
+3. **Test with PyTorch reference** — run the same model's K/V through the
+   PyTorch TurboQuant implementation and compare quality.
 
 ## Key Files
 
