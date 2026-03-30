@@ -653,10 +653,9 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_turbo3_0(
     return sum;
 }
 
-// ── TurboQuant 3-bit: FA V dequantize ──
-// Same constexpr centroid access as vec_dot_KQ above — no __constant__ serialization.
-// Mirrors dequantize_V_f16: reads `ne` contiguous elements starting at flat offset i0,
-// dequantizes from turbo3 blocks, writes to dst as half or float.
+// ── TurboQuant 3-bit: FA V dequantize (optimized) ──
+// Uses bitwise AND for modulo (QK_TURBO3=32 is power of 2) and right shift for div.
+// Caches centroid*norm LUT per block to avoid repeated __half2float + multiply.
 template <typename T, int ne>
 static __device__ __forceinline__ void dequantize_V_turbo3_0(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
     const block_turbo3_0 * blocks = (const block_turbo3_0 *) vx;
@@ -666,18 +665,27 @@ static __device__ __forceinline__ void dequantize_V_turbo3_0(const void * __rest
          0.021460f,  0.065717f,  0.117832f,  0.190685f
     };
 
+    // QK_TURBO3 = 32 = 2^5, so div/mod are just shift/mask
+    int prev_blk = -1;
+    float cn[8];
+
 #ifdef FP16_AVAILABLE
     if constexpr (std::is_same_v<T, half>) {
         half * out = (half *) dst;
 #pragma unroll
         for (int l = 0; l < ne; ++l) {
             const int elem = (int)(i0 + l);
-            const int blk  = elem / QK_TURBO3;
-            const int e    = elem % QK_TURBO3;
-            const float norm = __half2float(blocks[blk].norm);
-            uint8_t lo = (blocks[blk].qs[e >> 2] >> ((e & 3) << 1)) & 0x3;
-            uint8_t hi = (blocks[blk].signs[e >> 3] >> (e & 7)) & 0x1;
-            out[l] = __float2half(C[lo | (hi << 2)] * norm);
+            const int blk  = elem >> 5;       // elem / 32
+            const int e    = elem & 31;        // elem % 32
+            if (blk != prev_blk) {
+                const float norm = __half2float(blocks[blk].norm);
+#pragma unroll
+                for (int c = 0; c < 8; c++) cn[c] = C[c] * norm;
+                prev_blk = blk;
+            }
+            const uint8_t lo = (blocks[blk].qs[e >> 2] >> ((e & 3) << 1)) & 0x3;
+            const uint8_t hi = (blocks[blk].signs[e >> 3] >> (e & 7)) & 0x1;
+            out[l] = __float2half(cn[lo | (hi << 2)]);
         }
     } else
 #endif
@@ -686,12 +694,17 @@ static __device__ __forceinline__ void dequantize_V_turbo3_0(const void * __rest
 #pragma unroll
         for (int l = 0; l < ne; ++l) {
             const int elem = (int)(i0 + l);
-            const int blk  = elem / QK_TURBO3;
-            const int e    = elem % QK_TURBO3;
-            const float norm = __half2float(blocks[blk].norm);
-            uint8_t lo = (blocks[blk].qs[e >> 2] >> ((e & 3) << 1)) & 0x3;
-            uint8_t hi = (blocks[blk].signs[e >> 3] >> (e & 7)) & 0x1;
-            out[l] = C[lo | (hi << 2)] * norm;
+            const int blk  = elem >> 5;
+            const int e    = elem & 31;
+            if (blk != prev_blk) {
+                const float norm = __half2float(blocks[blk].norm);
+#pragma unroll
+                for (int c = 0; c < 8; c++) cn[c] = C[c] * norm;
+                prev_blk = blk;
+            }
+            const uint8_t lo = (blocks[blk].qs[e >> 2] >> ((e & 3) << 1)) & 0x3;
+            const uint8_t hi = (blocks[blk].signs[e >> 3] >> (e & 7)) & 0x1;
+            out[l] = cn[lo | (hi << 2)];
         }
     } else {
         static_assert(std::is_same_v<T, void>, "unsupported type");
