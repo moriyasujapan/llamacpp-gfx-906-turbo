@@ -772,8 +772,8 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    // Shadow cache: bulk dequant turbo3→fp16 once, then standard fp16 FA
-    // Set GGML_TURBO_DECODE_NATIVE=1 to use fused native turbo3 vec kernel instead
+    // Shadow cache (default): bulk dequant turbo3→fp16, then fp16 FA at full speed
+    // Set GGML_TURBO_DECODE_NATIVE=1 to use fused native kernel with v_dot2_f32_f16
     static const bool turbo_native = (getenv("GGML_TURBO_DECODE_NATIVE") != nullptr);
     if (turbo_native) {
         switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {

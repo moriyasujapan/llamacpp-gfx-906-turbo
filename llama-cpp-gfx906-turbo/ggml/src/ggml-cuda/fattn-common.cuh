@@ -592,8 +592,6 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_turbo3_0(
     GGML_UNUSED(Q_q8);
     GGML_UNUSED(Q_ds_v);
 
-    // Lloyd-Max centroids for Beta((127)/2, (127)/2) on [-1,1] at 3-bit (d=128 rotation groups).
-    // constexpr: lives in registers, no constant memory serialization.
     constexpr float C[8] = {
         -0.190685f, -0.117832f, -0.065717f, -0.021460f,
          0.021460f,  0.065717f,  0.117832f,  0.190685f
@@ -604,46 +602,51 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_turbo3_0(
 
     float sum = 0.0f;
     int prev_ib = -1;
-    float cn[8]; // centroid * norm LUT, cached per block
+
+#ifdef V_DOT2_F32_F16_AVAILABLE
+    // Use v_dot2_f32_f16: decode turbo3 → half2, then hardware dot product
+    half cn_h[8]; // centroid * norm as half, for packing into half2
+#endif
+    float cn[8];
 
 #pragma unroll
     for (int k_KQ_0 = 0; k_KQ_0 < D/2; k_KQ_0 += nthreads*cpy_ne) {
         const int base = k_KQ_0 + (threadIdx.x % nthreads)*cpy_ne;
         const int elem0 = base * 2;
-        const int ib = elem0 / QK_TURBO3;
-        const int j_start = elem0 % QK_TURBO3;
+        const int ib = elem0 >> 5;         // / QK_TURBO3 (32)
+        const int j_start = elem0 & 31;    // % QK_TURBO3
 
-        // Cache centroid*norm LUT once per block — eliminates redundant __half2float + multiply
         if (ib != prev_ib) {
             const float norm = __half2float(K_turbo[ib].norm);
 #pragma unroll
             for (int c = 0; c < 8; c++) {
                 cn[c] = C[c] * norm;
+#ifdef V_DOT2_F32_F16_AVAILABLE
+                cn_h[c] = __float2half(cn[c]);
+#endif
             }
             prev_ib = ib;
         }
 
-        // Batch-load qs and signs bytes — fewer device memory reads
-        const uint8_t qs_lo = K_turbo[ib].qs[j_start / 4];
-        const uint8_t qs_hi = K_turbo[ib].qs[j_start / 4 + 1];
-        const uint8_t signs = K_turbo[ib].signs[j_start / 8];
+        const uint8_t qs_lo = K_turbo[ib].qs[j_start >> 2];
+        const uint8_t qs_hi = K_turbo[ib].qs[(j_start >> 2) + 1];
+        const uint8_t signs = K_turbo[ib].signs[j_start >> 3];
 
 #pragma unroll
         for (int k_KQ_1 = 0; k_KQ_1 < cpy_ne; ++k_KQ_1) {
             const int lj = k_KQ_1 * 2;
             int idx0, idx1;
             { const uint8_t qs_b = (lj < 4) ? qs_lo : qs_hi;
-              const uint8_t low2 = (qs_b >> ((lj % 4) * 2)) & 0x3;
-              const uint8_t hi1  = (signs >> lj) & 0x1;
-              idx0 = low2 | (hi1 << 2); }
+              idx0 = ((qs_b >> ((lj & 3) << 1)) & 0x3) | (((signs >> lj) & 0x1) << 2); }
             { const int lj1 = lj + 1;
               const uint8_t qs_b = (lj1 < 4) ? qs_lo : qs_hi;
-              const uint8_t low2 = (qs_b >> ((lj1 % 4) * 2)) & 0x3;
-              const uint8_t hi1  = (signs >> lj1) & 0x1;
-              idx1 = low2 | (hi1 << 2); }
+              idx1 = ((qs_b >> ((lj1 & 3) << 1)) & 0x3) | (((signs >> lj1) & 0x1) << 2); }
+
 #ifdef V_DOT2_F32_F16_AVAILABLE
+            // Pack decoded K values as half2, use v_dot2_f32_f16 hardware instruction
+            const half2 k_h2 = make_half2(cn_h[idx0], cn_h[idx1]);
             const half2 qv = ((const half2 *) Q_v)[k_KQ_0/nthreads + k_KQ_1];
-            sum += cn[idx0] * __low2float(qv) + cn[idx1] * __high2float(qv);
+            ggml_cuda_mad(sum, k_h2, qv);
 #else
             const float2 qv = ((const float2 *) Q_v)[k_KQ_0/nthreads + k_KQ_1];
             sum += cn[idx0] * qv.x + cn[idx1] * qv.y;
