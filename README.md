@@ -16,13 +16,15 @@ Combines upstream llama.cpp with [iacopPBK](https://github.com/iacopPBK/llama.cp
 | KV Cache | Max Context | Gen (tok/s) | Prompt (tok/s) | Peak VRAM | KV Size |
 |----------|-------------|-------------|----------------|-----------|---------|
 | **turbo3 K+V** | **300,000** | 37.2 | 116.1 | 97% | ~3.5 GB |
-| turbo3 K+V | 256,000 | 38.1 | 128.8 | 93% | ~3.0 GB |
+| turbo3 K+V | 256,000 | 39.7 | 130.8 | 93% | ~3.0 GB |
+| turbo3 K+V | 65,536 | 42.4 | 127.7 | 69% | ~0.8 GB |
 | f16 K+V | 90,000 | 51.6 | 138.8 | 96% | ~10.5 GB |
 | f16 K+V | 65,536 | 51.6 | 153.2 | 96% | ~7.7 GB |
 
 Tensor split: `7,8,8,8` — flags: `--no-mmap --no-warmup`
 
-**Trade-off**: turbo3 gives 3.3x more context at 26% gen speed cost.
+**Trade-off**: turbo3 gives 3.3x more context at 18% gen speed cost (at same context size).
+The speed gap widens to 26% at max context due to larger KV cache read overhead.
 
 ## Build
 
