@@ -6,10 +6,23 @@ Combines upstream llama.cpp with [iacopPBK](https://github.com/iacopPBK/llama.cp
 
 ## Results
 
-- **1M token context** on 4x MI50 (64 GB VRAM) with Qwen3.5-27B Q4_0
+- **3.3x more context** than fp16 KV cache on the same hardware
 - **4.6x KV cache compression** (turbo3: 3.5 bits/value vs 16 bits fp16)
-- **24.6 tok/s** generation on Devstral 24B, turbo3 K+V, 4x MI50
-- KV cache for 1M context: **16 GB** (vs 75 GB with fp16)
+- **300K context** with turbo3 vs **90K max** with f16 on Qwen3-Coder-Next 80B
+- **1M context** on Qwen3.5-27B Q4_0 with 4x MI50
+
+### Benchmark: Qwen3-Coder-Next Q4_1 (80B MoE) — 4x MI50 (64 GB)
+
+| KV Cache | Max Context | Gen (tok/s) | Prompt (tok/s) | Peak VRAM | KV Size |
+|----------|-------------|-------------|----------------|-----------|---------|
+| **turbo3 K+V** | **300,000** | 37.2 | 116.1 | 97% | ~3.5 GB |
+| turbo3 K+V | 256,000 | 38.1 | 128.8 | 93% | ~3.0 GB |
+| f16 K+V | 90,000 | 51.6 | 138.8 | 96% | ~10.5 GB |
+| f16 K+V | 65,536 | 51.6 | 153.2 | 96% | ~7.7 GB |
+
+Tensor split: `7,8,8,8` — flags: `--no-mmap --no-warmup`
+
+**Trade-off**: turbo3 gives 3.3x more context at 26% gen speed cost.
 
 ## Build
 
