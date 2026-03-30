@@ -26,6 +26,23 @@ Tensor split: `7,8,8,8` — flags: `--no-mmap --no-warmup`
 **Trade-off**: turbo3 gives 3.3x more context at 18% gen speed cost (at same context size).
 The speed gap widens to 26% at max context due to larger KV cache read overhead.
 
+### Performance Tuning
+
+Enable HIP graphs for +8-10% gen speed (reduces kernel launch overhead):
+```bash
+cmake .. -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx906 -DCMAKE_BUILD_TYPE=Release -DGGML_HIP_GRAPHS=ON
+```
+
+**GPU power**: MI50 TDP is 300W. At 100W power limit, clocks throttle to 925/350 MHz
+(53%/35% of peak). Unlocking full power roughly doubles throughput.
+
+### Next Optimization Steps
+
+1. **Unlock GPU power** — 100W→300W gives ~2x throughput (clock+bandwidth limited)
+2. **Speculative decoding** — `--spec-type ngram-mod` for 2-3x code generation throughput
+3. **Fused MoE kernels** — `gfx906/fused/` has RMS+mul+MMQ fusion (reduce kernel count)
+4. **Pipeline tuning** — reduce graph splits across GPUs to minimize bubbles
+
 ## Build
 
 ```bash
