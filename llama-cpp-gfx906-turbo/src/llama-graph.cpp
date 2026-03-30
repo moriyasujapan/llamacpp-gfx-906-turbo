@@ -2088,7 +2088,7 @@ ggml_tensor * llm_graph_context::build_attn(
     ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
     cb(cur, "kqv_out", il);
 
-    // TurboQuant V un-rotation: O(d log d) inverse WHT on attention output
+    // TurboQuant V un-rotation
     if (v->type == GGML_TYPE_TURBO2_0 || v->type == GGML_TYPE_TURBO3_0 || v->type == GGML_TYPE_TURBO4_0) {
         if (cur->ne[0] % 128 == 0) {
             if (!ggml_is_contiguous(cur)) { cur = ggml_cont(ctx0, cur); }

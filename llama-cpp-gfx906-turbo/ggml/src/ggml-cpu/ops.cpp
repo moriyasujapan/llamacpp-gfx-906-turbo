@@ -10618,9 +10618,12 @@ void ggml_compute_forward_gated_delta_net(
 
 // ggml_compute_forward_turbo_wht
 
-// WHT sign arrays (must match Metal shader turbo_wht_signs1/2)
+// WHT sign arrays — K signs (forward Q rotation, K SET_ROWS)
 static const float turbo_wht_s1[128] = {-1,1,1,-1,-1,1,-1,1,-1,-1,1,1,1,1,1,1,1,-1,1,-1,1,-1,-1,1,1,1,-1,1,1,-1,-1,-1,-1,1,1,-1,1,1,-1,1,-1,1,1,-1,-1,1,-1,1,1,1,1,-1,-1,-1,-1,-1,1,-1,1,1,1,1,-1,1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,1,-1,-1,1,1,1,-1,-1,1,1,-1,1,1,-1,1,-1,-1,1,1,-1,1,-1,1,-1,1,1,1,1,-1,1,-1,1,1,-1,1,1,-1,-1,-1,-1,-1,1,1,-1,1,1,-1,1};
 static const float turbo_wht_s2[128] = {1,1,1,1,-1,1,1,-1,1,-1,-1,-1,1,-1,-1,-1,1,1,-1,-1,1,-1,1,-1,1,-1,-1,1,-1,1,1,1,1,1,-1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,1,1,1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,1,-1,1,-1,-1,-1,-1,1,-1,1,-1,1,-1,-1,1,1,-1,1,-1,1,1,-1,1,-1,-1,-1,-1,1,-1,-1,1,-1,1,-1,1,1,1,-1,-1,1,-1,1,-1,1,1,-1,-1,1,-1,1,-1,1,1,-1,1,-1,1,-1,-1,-1,-1,-1,1,-1};
+// WHT sign arrays — V signs (V SET_ROWS, inverse V output rotation)
+static const float turbo_wht_s1_v[128] = {1,-1,1,1,-1,1,1,-1,1,-1,1,1,-1,-1,1,-1,1,-1,-1,-1,-1,-1,1,1,-1,1,1,-1,1,-1,-1,-1,-1,1,-1,1,-1,-1,1,-1,1,-1,-1,-1,1,-1,-1,1,1,-1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,-1,-1,-1,1,-1,1,-1,-1,1,-1,-1,1,-1,-1,1,1,1,-1,1,-1,-1,-1,1,-1,1,-1,-1,-1,-1,1,-1,-1,-1,-1,-1,1,-1,-1,1,1,-1,1,1,-1,-1,-1,-1,1,1,-1,1,-1,-1,-1,1,1,1,-1,-1,1,-1,-1,-1,-1,1,1,-1};
+static const float turbo_wht_s2_v[128] = {-1,1,1,-1,1,-1,-1,-1,1,-1,1,1,1,1,1,1,1,1,1,1,-1,1,1,-1,-1,1,-1,-1,-1,-1,-1,-1,1,1,-1,1,1,-1,1,1,1,-1,1,1,-1,1,-1,-1,-1,-1,1,-1,1,1,-1,-1,-1,-1,-1,1,1,1,-1,-1,-1,1,-1,-1,1,1,-1,1,-1,-1,-1,-1,1,-1,-1,1,-1,1,1,1,-1,1,-1,1,1,-1,1,1,1,-1,1,1,1,1,-1,1,-1,-1,1,-1,-1,-1,-1,-1,1,-1,-1,1,1,1,-1,1,-1,-1,1,-1,1,-1,1,-1,-1,-1,-1,1};
 
 static void ggml_compute_forward_turbo_wht_f32(
         const ggml_compute_params * params,
@@ -10640,8 +10643,10 @@ static void ggml_compute_forward_turbo_wht_f32(
     int direction;
     memcpy(&direction, dst->op_params, sizeof(int));
 
-    const float * s_first = (direction == 0) ? turbo_wht_s1 : turbo_wht_s2;
-    const float * s_second = (direction == 0) ? turbo_wht_s2 : turbo_wht_s1;
+    // direction 0: forward Q rotation (K signs: s1 → s2)
+    // direction 1: inverse V output rotation (V signs: s2_v → s1_v)
+    const float * s_first  = (direction == 0) ? turbo_wht_s1   : turbo_wht_s2_v;
+    const float * s_second = (direction == 0) ? turbo_wht_s2   : turbo_wht_s1_v;
 
     const int64_t n_total = ggml_nelements(src);
     const int64_t n_groups = n_total / 128;
