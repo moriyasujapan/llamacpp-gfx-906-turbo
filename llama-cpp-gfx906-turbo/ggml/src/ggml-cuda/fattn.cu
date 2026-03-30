@@ -162,30 +162,27 @@ static void turbo_shadow_sync(
         const int64_t dst_row_stride  = ne0;
         const int64_t dst_head_stride = ne0 * sh.capacity;
 
-        // K tensor is a 4D view: (head_dim, n_head_kv, n_kv, n_stream)
-        // nb[1] = stride between heads (bytes)
-        // nb[2] = stride between KV positions (bytes)
-        // The dequant kernel uses:
-        //   src_row = src + head * src_nb2 + abs_row * src_nb1
-        // So src_nb1 = nb[2] (KV row stride), src_nb2 = nb[1] (head stride)
+        // kernel: src_row = src + head * src_nb2 + abs_row * src_nb1
+        // Pass T->nb[1] and T->nb[2] in original order — the kernel parameters
+        // match the tensor view dimensions directly.
         dim3 grid((int)n_rows, (int)ne2);
         if (T->type == GGML_TYPE_TURBO4_0) {
             k_turbo4_dequant_rows_f16<<<grid, (int)ne0, 0, stream>>>(
                 (const char *)T->data, sh.buf, ne0,
                 row_start, n_rows,
-                T->nb[2], T->nb[1],
+                T->nb[1], T->nb[2],
                 dst_row_stride, dst_head_stride);
         } else if (T->type == GGML_TYPE_TURBO2_0) {
             k_turbo2_dequant_rows_f16<<<grid, (int)ne0, 0, stream>>>(
                 (const char *)T->data, sh.buf, ne0,
                 row_start, n_rows,
-                T->nb[2], T->nb[1],
+                T->nb[1], T->nb[2],
                 dst_row_stride, dst_head_stride);
         } else {
             k_turbo3_dequant_rows_f16<<<grid, (int)ne0, 0, stream>>>(
                 (const char *)T->data, sh.buf, ne0,
                 row_start, n_rows,
-                T->nb[2], T->nb[1],
+                T->nb[1], T->nb[2],
                 dst_row_stride, dst_head_stride);
         }
     }
@@ -772,10 +769,10 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         return;
     }
 
-    // Shadow cache (default): bulk dequant turbo3→fp16, then fp16 FA at full speed
-    // Set GGML_TURBO_DECODE_NATIVE=1 to use fused native kernel with v_dot2_f32_f16
-    static const bool turbo_native = (getenv("GGML_TURBO_DECODE_NATIVE") != nullptr);
-    if (turbo_native) {
+    // Native turbo3 vec kernel (default) — handles all tensor layouts correctly
+    // Shadow cache V dequant has layout bug — use GGML_TURBO_SHADOW_CACHE=1 to test
+    static const bool turbo_shadow = (getenv("GGML_TURBO_SHADOW_CACHE") != nullptr);
+    if (!turbo_shadow) {
         switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {
             case BEST_FATTN_KERNEL_NONE:
                 GGML_ABORT("fatal error");
@@ -807,12 +804,26 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     ggml_tensor dst_copy = *dst;
 
     if (turbo_k) {
+        static int k_diag = 0;
+        if (k_diag < 2) {
+            fprintf(stderr, "[SHADOW K] ne=(%ld,%ld,%ld,%ld) nb=(%ld,%ld,%ld,%ld) type=%d\n",
+                    (long)K->ne[0], (long)K->ne[1], (long)K->ne[2], (long)K->ne[3],
+                    (long)K->nb[0], (long)K->nb[1], (long)K->nb[2], (long)K->nb[3], K->type);
+            k_diag++;
+        }
         turbo_fp16_shadow & shK = g_turbo_shadows[K->data];
         turbo_shadow_sync(K, shK, K_f16, stream);
         dst_copy.src[1] = &K_f16;
         dst_mod = &dst_copy;
     }
     if (turbo_v) {
+        static int v_diag = 0;
+        if (v_diag < 2) {
+            fprintf(stderr, "[SHADOW V] ne=(%ld,%ld,%ld,%ld) nb=(%ld,%ld,%ld,%ld) type=%d\n",
+                    (long)V->ne[0], (long)V->ne[1], (long)V->ne[2], (long)V->ne[3],
+                    (long)V->nb[0], (long)V->nb[1], (long)V->nb[2], (long)V->nb[3], V->type);
+            v_diag++;
+        }
         turbo_fp16_shadow & shV = g_turbo_shadows[V->data];
         turbo_shadow_sync(V, shV, V_f16, stream);
         dst_copy.src[2] = &V_f16;
