@@ -76,20 +76,25 @@ The [`feat/gemma4-support`](https://github.com/moriyasujapan/llamacpp-gfx-906-tu
 
 **Verified**: works on gfx906 (2x AMD Radeon Pro VII) without HIP graphs. HIP graphs with Gemma 4 is untested.
 
-**Limitation**: turbo3/turbo2/turbo4 KV cache types are **not compatible** with Gemma 4.
-Gemma 4 non-SWA layers use head_dim=512, which exceeds the turbo FA vec kernel limit (≤256).
-Use f16 KV cache instead.
+**Known limitations**:
+- `--ubatch-size 1` is required. Gemma 4 non-SWA layers have head_dim=512, which exceeds
+  the gfx906 FA vec kernel limit (≤256). With default ubatch, rocBLAS batched GEMM crashes
+  during prompt processing. ubatch=1 routes all tokens through the single-vector path.
+- turbo3/turbo2/turbo4 KV cache types are not supported (same head_dim constraint).
+- Prompt throughput is ~19 tok/s (limited by ubatch=1 sequential processing).
+- Generate throughput: ~18 tok/s on gemma-4-31B-it-Q4_0 with 2x Radeon Pro VII.
 
 ```bash
 # Build without HIP graphs for Gemma 4
 cmake .. -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx906 -DCMAKE_BUILD_TYPE=Release
 cmake --build . --target llama-server -j$(nproc)
 
-# Run Gemma 4
+# Run Gemma 4 (ubatch-size 1 required)
 ./bin/llama-server \
-  -m gemma-4-it-Q4_0.gguf \
+  -m gemma-4-31B-it-Q4_0.gguf \
   --host 0.0.0.0 --port 8080 \
-  -ngl 999 -c 32768 -np 1 \
+  -ngl 999 -c 4096 -np 1 \
+  --ubatch-size 1 \
   --no-warmup
 ```
 
