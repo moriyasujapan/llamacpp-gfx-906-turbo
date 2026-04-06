@@ -76,6 +76,10 @@ The [`feat/gemma4-support`](https://github.com/moriyasujapan/llamacpp-gfx-906-tu
 
 **Verified**: works on gfx906 (2x AMD Radeon Pro VII) without HIP graphs. HIP graphs with Gemma 4 is untested.
 
+**Limitation**: turbo3/turbo2/turbo4 KV cache types are **not compatible** with Gemma 4.
+Gemma 4 non-SWA layers use head_dim=512, which exceeds the turbo FA vec kernel limit (≤256).
+Use f16 KV cache instead.
+
 ```bash
 # Build without HIP graphs for Gemma 4
 cmake .. -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx906 -DCMAKE_BUILD_TYPE=Release
