@@ -2956,14 +2956,6 @@ llama_context * llama_init_from_model(
     if (params.type_k == GGML_TYPE_TURBO2_0 || params.type_v == GGML_TYPE_TURBO2_0 ||
         params.type_k == GGML_TYPE_TURBO3_0 || params.type_v == GGML_TYPE_TURBO3_0 ||
         params.type_k == GGML_TYPE_TURBO4_0 || params.type_v == GGML_TYPE_TURBO4_0) {
-        // Gemma4 has head_dim=512 on non-SWA layers; the turbo vec FA kernel only
-        // supports head_dim <= 256, so turbo cache types are not compatible.
-        if (model->arch == LLM_ARCH_GEMMA4) {
-            LLAMA_LOG_ERROR("%s: turbo cache types are not supported for Gemma 4 "
-                "(head_dim=512 exceeds the turbo FA vec kernel limit of 256). "
-                "Use --cache-type-k f16 --cache-type-v f16 instead.\n", __func__);
-            return nullptr;
-        }
         if (params.flash_attn_type == LLAMA_FLASH_ATTN_TYPE_DISABLED) {
             LLAMA_LOG_WARN("%s: turbo cache types require flash attention - forcing on\n", __func__);
         }

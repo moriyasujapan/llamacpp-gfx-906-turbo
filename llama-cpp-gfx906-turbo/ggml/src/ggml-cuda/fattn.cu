@@ -487,8 +487,10 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
     // Asymmetric turbo3 K (shadowed to f16) + q8_0 V
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_F16, GGML_TYPE_Q8_0)
 
-    // Gemma4: head_dim=512 with f16 K+V (cols_per_block=1 forced in kernel to stay within 256 VGPR limit)
-    FATTN_VEC_CASE(512, GGML_TYPE_F16, GGML_TYPE_F16)
+    // Gemma4: head_dim=512 (cols_per_block=1 forced in kernel to stay within 256 VGPR limit)
+    FATTN_VEC_CASE(512, GGML_TYPE_F16,     GGML_TYPE_F16)
+    FATTN_VEC_CASE(512, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO3_0)
+    FATTN_VEC_CASE(512, GGML_TYPE_TURBO3_0, GGML_TYPE_F16)
 
     GGML_ABORT("fatal error");
 }
