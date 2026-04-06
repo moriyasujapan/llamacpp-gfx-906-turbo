@@ -704,6 +704,10 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     // If there are no tensor cores available, use the generic tile kernel:
     if (can_use_vector_kernel) {
         if (!ggml_is_quantized(K->type) && !ggml_is_quantized(V->type)) {
+            // D=512 (Gemma4): tile kernel doesn't support this head size, must use vec
+            if (Q->ne[0] > 256) {
+                return BEST_FATTN_KERNEL_VEC;
+            }
             if (Q->ne[1] == 1) {
                 if (!gqa_opt_applies) {
                     return BEST_FATTN_KERNEL_VEC;
