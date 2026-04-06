@@ -74,7 +74,7 @@ Note: doesn't work on hybrid SSM+attention models (Qwen3-Coder-Next, Qwen3.5).
 
 The [`feat/gemma4-support`](https://github.com/moriyasujapan/llamacpp-gfx-906-turbo/tree/feat/gemma4-support) branch adds Gemma 4 support ported from upstream llama.cpp.
 
-**Verified**: works without HIP graphs (`-DGGML_HIP_GRAPHS=OFF`). HIP graphs with Gemma 4 is untested.
+**Verified**: works on gfx906 (2x AMD Radeon Pro VII) without HIP graphs. HIP graphs with Gemma 4 is untested.
 
 ```bash
 # Build without HIP graphs for Gemma 4
