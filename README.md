@@ -70,6 +70,25 @@ Note: doesn't work on hybrid SSM+attention models (Qwen3-Coder-Next, Qwen3.5).
 - LDS limit 64KB (not 160KB like newer chips)
 - Adaptive block sizes for small batches
 
+## Gemma 4 Support
+
+The [`feat/gemma4-support`](https://github.com/moriyasujapan/llamacpp-gfx-906-turbo/tree/feat/gemma4-support) branch adds Gemma 4 support ported from upstream llama.cpp.
+
+**Verified**: works on gfx906 (2x AMD Radeon Pro VII) without HIP graphs. HIP graphs with Gemma 4 is untested.
+
+```bash
+# Build without HIP graphs for Gemma 4
+cmake .. -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx906 -DCMAKE_BUILD_TYPE=Release
+cmake --build . --target llama-server -j$(nproc)
+
+# Run Gemma 4
+./bin/llama-server \
+  -m gemma-4-it-Q4_0.gguf \
+  --host 0.0.0.0 --port 8080 \
+  -ngl 999 -c 32768 -np 1 \
+  --no-warmup
+```
+
 ## Build
 
 ```bash
