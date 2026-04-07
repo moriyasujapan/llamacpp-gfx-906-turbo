@@ -14,12 +14,12 @@
 
 ## Fork Features
 
+- **Gemma 4 27B/31B** — fully supported including FlashAttention with head_dim=512
+- **f16 KV cache** — fixed for gfx906 (was crashing in upstream due to broken rocBLAS path)
 - **TurboQuant KV cache** — custom compressed KV types (`turbo2`, `turbo3`, `turbo4`) via Walsh-Hadamard Transform; dramatically reduces KV memory vs FP16 with minimal quality loss
 - **Custom GFX906 GEMM kernels** — hand-tuned FP16/FP32 tiled GEMM replacing rocBLAS for attention and FFN (rocBLAS is unreliable on gfx906 under ROCm 7.x)
 - **gfx906_mmf** — FP16 attention GEMM kernel (any M×N×K)
 - **gfx906_sgemm** — FP32 attention GEMM kernel (any M×N×K)
-- **Gemma 4 27B/31B** — fully supported including FlashAttention with head_dim=512
-- **f16 KV cache** — fixed for gfx906 (was crashing in upstream due to broken rocBLAS path)
 
 ## Supported Models (verified on MI50×2)
 
