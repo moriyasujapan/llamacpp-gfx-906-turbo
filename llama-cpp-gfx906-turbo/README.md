@@ -1,3 +1,82 @@
+# llama.cpp — GFX906 / MI50 Turbo Fork
+
+> **This is a fork of [llama.cpp](https://github.com/ggml-org/llama.cpp) optimised for AMD GFX906 (Vega20 / Radeon Pro VII / MI50).**
+> Upstream README follows below.
+
+## Hardware Target
+
+| Item | Detail |
+|------|--------|
+| GPU | AMD Radeon Pro VII / MI50 (gfx906, Vega20) |
+| VRAM | 16 GB HBM2 per card |
+| Tested config | 2× AMD Radeon Pro VII (32 GB total) |
+| ROCm | 7.2.0 |
+
+## Fork Features
+
+- **TurboQuant KV cache** — custom compressed KV types (`turbo2`, `turbo3`, `turbo4`) via Walsh-Hadamard Transform; dramatically reduces KV memory vs FP16 with minimal quality loss
+- **Custom GFX906 GEMM kernels** — hand-tuned FP16/FP32 tiled GEMM replacing rocBLAS for attention and FFN (rocBLAS is unreliable on gfx906 under ROCm 7.x)
+- **gfx906_mmf** — FP16 attention GEMM kernel (any M×N×K)
+- **gfx906_sgemm** — FP32 attention GEMM kernel (any M×N×K)
+- **Gemma 4 27B/31B** — fully supported including FlashAttention with head_dim=512
+- **f16 KV cache** — fixed for gfx906 (was crashing in upstream due to broken rocBLAS path)
+
+## Supported Models (verified on MI50×2)
+
+| Model | KV type | Status |
+|-------|---------|--------|
+| Qwen3.5 27B Q4_0 | f16 / turbo3 | ✅ |
+| Qwen3.5 35B-A3B Q4_0 (MoE) | f16 / turbo3 | ✅ |
+| Gemma 4 31B Q4_0 | f16 / turbo3 | ✅ |
+
+## Benchmark Results (2× AMD Radeon Pro VII, ROCm 7.2.0)
+
+All tests: `llama-bench -ngl 99 --no-warmup -r 3 -p 512,1024 -n 128,256`
+
+### Qwen3.5 27B Q4_0
+
+| KV type | pp512 (t/s) | pp1024 (t/s) | tg128 (t/s) | tg256 (t/s) |
+|---------|------------|-------------|------------|------------|
+| f16     | 266.96     | 351.06      | 24.24      | 24.47      |
+| turbo3  | 232.63     | 285.27      | 20.57      | 20.52      |
+
+### Qwen3.5 35B-A3B Q4_0 (MoE)
+
+| KV type | pp512 (t/s) | pp1024 (t/s) | tg128 (t/s) | tg256 (t/s) |
+|---------|------------|-------------|------------|------------|
+| f16     | 750.71     | 1203.64     | 60.15      | 63.15      |
+| turbo3  | 638.33     | 903.25      | 46.61      | 46.78      |
+
+### Gemma 4 31B Q4_0
+
+| KV type | pp512 (t/s) | pp1024 (t/s) | tg128 (t/s) | tg256 (t/s) |
+|---------|------------|-------------|------------|------------|
+| f16     | 198.18     | 236.94      | 21.63      | 21.72      |
+| turbo3  | 128.49     | 127.63      | 13.62      | 13.41      |
+
+## Build
+
+```bash
+git clone https://github.com/moriyasujapan/llamacpp-gfx-906-turbo
+cd llamacpp-gfx-906-turbo/llama-cpp-gfx906-turbo
+cmake -B build -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx906 -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+```
+
+## Usage
+
+```bash
+# FP16 KV cache
+HSA_OVERRIDE_GFX_VERSION=9.0.6 ./build/bin/llama-server \
+  -m /path/to/model.gguf -ngl 99 --cache-type-k f16 --cache-type-v f16
+
+# TurboQuant KV cache (recommended for large contexts)
+HSA_OVERRIDE_GFX_VERSION=9.0.6 ./build/bin/llama-server \
+  -m /path/to/model.gguf -ngl 99 --cache-type-k turbo3 --cache-type-v turbo3
+```
+
+---
+
 # llama.cpp
 
 ![llama](https://user-images.githubusercontent.com/1991296/230134379-7181e485-c521-4d23-a0d6-f7b3b61ba524.png)

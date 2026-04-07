@@ -199,7 +199,8 @@ void gfx906_sgemm_tiled(
 }
 
 // Dispatch function - returns true if handled by custom kernel
-// Dispatch bounds tuned via benchmarking against rocBLAS on MI50
+// Note: upper bounds removed since rocBLAS is not reliable on gfx906;
+// the tiled kernel handles arbitrary M, N, K correctly.
 static bool gfx906_sgemm_custom_dispatch(
         const float * src0,
         const float * src1,
@@ -210,11 +211,7 @@ static bool gfx906_sgemm_custom_dispatch(
         const int stride_dst,
         cudaStream_t stream) {
 
-    if (M < 32 || N < 32 || K < 64) {
-        return false;
-    }
-
-    if (M > 128 || N > 2048 || K > 8192) {
+    if (M < 1 || N < 1 || K < 1) {
         return false;
     }
 

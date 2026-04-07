@@ -288,7 +288,7 @@ static bool fast_fp16_available(const int cc) {
 
 // To be used for feature selection of external libraries, e.g. cuBLAS.
 static bool fast_fp16_hardware_available(const int cc) {
-    return (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_PASCAL && cc != 610) || GGML_CUDA_CC_IS_AMD(cc) ||
+    return (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_PASCAL && cc != 610) || (GGML_CUDA_CC_IS_AMD(cc) && !GGML_CUDA_CC_IS_GCN(cc)) ||
         (GGML_CUDA_CC_IS_MTHREADS(cc) && cc >= GGML_CUDA_CC_QY2);
 }
 
@@ -1462,7 +1462,12 @@ struct ggml_backend_cuda_context {
         if (cublas_handles[device] == nullptr) {
             ggml_cuda_set_device(device);
             CUBLAS_CHECK(cublasCreate(&cublas_handles[device]));
-            CUBLAS_CHECK(cublasSetMathMode(cublas_handles[device], CUBLAS_TF32_TENSOR_OP_MATH));
+            // CUBLAS_TF32_TENSOR_OP_MATH requires NVIDIA Ampere+ tensor cores.
+            // On AMD GCN (gfx906) this call fails with CUBLAS_STATUS_NOT_SUPPORTED.
+            const int cc = ggml_cuda_info().devices[device].cc;
+            if (GGML_CUDA_CC_IS_NVIDIA(cc) || GGML_CUDA_CC_IS_CDNA(cc)) {
+                CUBLAS_CHECK(cublasSetMathMode(cublas_handles[device], CUBLAS_TF32_TENSOR_OP_MATH));
+            }
         }
         return cublas_handles[device];
     }
