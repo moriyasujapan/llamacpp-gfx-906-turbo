@@ -74,16 +74,29 @@ Note: doesn't work on hybrid SSM+attention models (Qwen3-Coder-Next, Qwen3.5).
 
 Gemma 4 support is included in main. Ported from upstream llama.cpp with gfx906-specific FA vec kernel extension for head_dim=512.
 
-**Verified**: works on gfx906 (2x AMD Radeon Pro VII) with HIP graphs enabled.
+**Verified**: works on gfx906 (2x AMD Radeon Pro VII) with both f16 and turbo3 KV cache.
 
-**Benchmarks** (gemma-4-31B-it-Q4_0, 2x Radeon Pro VII, f16 KV):
+### Gemma 4 31B Q4_0 — f16 KV
 
-| | Prompt (tok/s) | Gen (tok/s) |
-|--|--|--|
-| Default (HIP graphs ON) | 57.4 | 22.1 |
+```
+| model                          |       size |     params | backend    | ngl |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | --------------: | -------------------: |
+| gemma4 ?B Q4_0                 |  16.13 GiB |    30.70 B | ROCm       |  99 |           pp512 |       198.18 ± 46.44 |
+| gemma4 ?B Q4_0                 |  16.13 GiB |    30.70 B | ROCm       |  99 |          pp1024 |        236.94 ± 2.64 |
+| gemma4 ?B Q4_0                 |  16.13 GiB |    30.70 B | ROCm       |  99 |           tg128 |         21.63 ± 0.28 |
+| gemma4 ?B Q4_0                 |  16.13 GiB |    30.70 B | ROCm       |  99 |           tg256 |         21.72 ± 0.00 |
+```
 
-**Known limitations**:
-- turbo3/turbo2/turbo4 KV cache types are not supported (head_dim=512 has no turbo FA vec kernel).
+### Gemma 4 31B Q4_0 — turbo3 KV
+
+```
+| model                          |       size |     params | backend    | ngl | type_k | type_v |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | -----: | -----: | --------------: | -------------------: |
+| gemma4 ?B Q4_0                 |  16.13 GiB |    30.70 B | ROCm       |  99 | turbo3 | turbo3 |           pp512 |        128.49 ± 2.25 |
+| gemma4 ?B Q4_0                 |  16.13 GiB |    30.70 B | ROCm       |  99 | turbo3 | turbo3 |          pp1024 |        127.63 ± 2.13 |
+| gemma4 ?B Q4_0                 |  16.13 GiB |    30.70 B | ROCm       |  99 | turbo3 | turbo3 |           tg128 |         13.62 ± 0.08 |
+| gemma4 ?B Q4_0                 |  16.13 GiB |    30.70 B | ROCm       |  99 | turbo3 | turbo3 |           tg256 |         13.41 ± 0.05 |
+```
 
 ```bash
 # Build with HIP graphs (recommended)
